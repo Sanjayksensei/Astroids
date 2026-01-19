@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASTROIDS | Hardcore Mode</title>
+    <style>
+        body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Inter', sans-serif; }
+        canvas { display: block; }
+        
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            color: white; z-index: 10; pointer-events: none;
+        }
+
+        #overlay {
+            background: rgba(0,0,0,0.9);
+            padding: 40px; border-radius: 10px;
+            text-align: center; pointer-events: auto;
+            border: 2px solid #ff0033;
+            box-shadow: 0 0 30px rgba(255, 0, 51, 0.3);
+        }
+
+        #scoreboard {
+            position: absolute; top: 20px; left: 20px;
+            font-size: 1.8rem; font-weight: 700; color: #ff0033;
+            text-shadow: 0 0 10px rgba(255, 0, 51, 0.5); display: none;
+        }
+
+        h1 { font-size: 3.5rem; letter-spacing: 20px; color: #fff; margin: 0; }
+        .warning { color: #ff0033; font-weight: bold; animation: blink 1s infinite; }
+        
+        @keyframes blink { 50% { opacity: 0; } }
+
+        .start-btn { 
+            margin-top: 20px; padding: 15px 50px; 
+            border: 1px solid #fff; background: #ff0033; 
+            color: white; font-weight: bold; cursor: pointer;
+            transition: 0.3s;
+        }
+        .start-btn:hover { background: white; color: #ff0033; }
+        
+        #flash {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #ff0033; opacity: 0; pointer-events: none; z-index: 20;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="flash"></div>
+    <div id="scoreboard">ALTITUDE: <span id="time-val">0</span>m</div>
+
+    <div id="ui-layer">
+        <div id="overlay">
+            <h1>ASTROIDS</h1>
+            <p class="warning">DANGER: HIGH DENSITY DEBRIS AHEAD</p>
+            <p style="font-size: 0.9rem; opacity: 0.6;">ARROWS to Pilot • Survival is Mandatory</p>
+            <button class="start-btn" id="start-btn">ENGAGE ENGINES (ENTER)</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        let gameStarted = false;
+        let score = 0;
+        let lastTime = 0;
+        let shipSpeed = 0.25; // Faster base speed
+        const asteroids = [];
+        const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+
+        // 1. Scene Setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 2. The Ship
+        const shipGroup = new THREE.Group();
+        const body = new THREE.Mesh(new THREE.ConeGeometry(0.3, 1.2, 4), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+        body.rotation.x = Math.PI / 2;
+        shipGroup.add(body);
+        scene.add(shipGroup);
+        const shipBox = new THREE.Box3();
+
+        // 3. High-Speed Asteroids
+        function createAsteroid() {
+            const size = 0.8 + Math.random() * 2.5;
+            const mesh = new THREE.Mesh(
+                new THREE.DodecahedronGeometry(size, 0),
+                new THREE.MeshStandardMaterial({ color: 0x333333, flatShading: true })
+            );
+            
+            // Sphere-based spawning around the player
+            resetAsteroid(mesh);
+            
+            mesh.userData = {
+                // Increased Velocity: asteroids move aggressively
+                velocity: new THREE.Vector3((Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3),
+                rotation: new THREE.Vector3(Math.random()*0.05, Math.random()*0.05, Math.random()*0.05),
+                box: new THREE.Box3()
+            };
+            
+            scene.add(mesh);
+            asteroids.push(mesh);
+        }
+
+        function resetAsteroid(mesh) {
+            const range = 60;
+            mesh.position.set(
+                shipGroup.position.x + (Math.random()-0.5) * range,
+                shipGroup.position.y + (Math.random()-0.5) * range,
+                shipGroup.position.z + (Math.random()-0.5) * range - 40 // Spawn ahead
+            );
+        }
+
+        for(let i=0; i<300; i++) createAsteroid(); // Double the count
+
+        // Lighting
+        const bluePoint = new THREE.PointLight(0x0066ff, 2, 50); bluePoint.position.set(10, 10, 10);
+        const redPoint = new THREE.PointLight(0xff0033, 2, 50); redPoint.position.set(-10, -10, 10);
+        scene.add(bluePoint, redPoint, new THREE.AmbientLight(0x111111));
+
+        // 4. Input & Start
+        window.addEventListener('keydown', (e) => { 
+            if(e.key === 'Enter' && !gameStarted) startGame();
+            if(keys.hasOwnProperty(e.key)) keys[e.key] = true; 
+        });
+        window.addEventListener('keyup', (e) => { if(keys.hasOwnProperty(e.key)) keys[e.key] = false; });
+        document.getElementById('start-btn').onclick = startGame;
+
+        function startGame() {
+            gameStarted = true;
+            score = 0;
+            shipSpeed = 0.25;
+            lastTime = Date.now();
+            shipGroup.position.set(0, 0, 0);
+            document.getElementById('overlay').style.display = 'none';
+            document.getElementById('scoreboard').style.display = 'block';
+        }
+
+        function onCollision() {
+            document.getElementById('flash').style.opacity = '1';
+            setTimeout(() => { document.getElementById('flash').style.opacity = '0'; }, 150);
+            gameStarted = false;
+            document.getElementById('overlay').style.display = 'block';
+            document.getElementById('scoreboard').style.display = 'none';
+        }
+
+        // 5. Physics Loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if(gameStarted) {
+                // Score & Difficulty Scaling
+                score = Math.floor((Date.now() - lastTime) / 100);
+                document.getElementById('time-val').innerText = score;
+                shipSpeed += 0.0001; // Constantly getting faster
+
+                // Pilot Controls
+                if(keys.ArrowUp) shipGroup.translateZ(shipSpeed);
+                if(keys.ArrowDown) shipGroup.translateZ(-shipSpeed/2);
+                if(keys.ArrowLeft) shipGroup.rotation.y += 0.05;
+                if(keys.ArrowRight) shipGroup.rotation.y -= 0.05;
+
+                shipBox.setFromObject(shipGroup);
+                shipBox.expandByScalar(-0.2); // Make player hitbox slightly smaller for "near miss" feel
+
+                asteroids.forEach(ast => {
+                    ast.position.add(ast.userData.velocity);
+                    ast.rotation.x += ast.userData.rotation.x;
+                    
+                    // Reposition asteroids that get too far away to keep the field dense
+                    if(ast.position.distanceTo(shipGroup.position) > 80) {
+                        resetAsteroid(ast);
+                    }
+
+                    ast.userData.box.setFromObject(ast);
+                    if(shipBox.intersectsBox(ast.userData.box)) onCollision();
+                });
+
+                // Camera Logic
+                const offset = new THREE.Vector3(0, 1.2, -5).applyMatrix4(shipGroup.matrixWorld);
+                camera.position.lerp(offset, 0.15);
+                camera.lookAt(shipGroup.position);
+            } else {
+                shipGroup.rotation.y += 0.01;
+                camera.position.set(0, 2, 8);
+                camera.lookAt(shipGroup.position);
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
